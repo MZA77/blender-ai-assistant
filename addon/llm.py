@@ -16,6 +16,17 @@ import os
 
 MODEL = "claude-opus-4-8"
 
+# Conversation memory for the current Blender session. Lets references like
+# "it" / "the sphere" / "make it brighter" resolve across messages. Holds
+# alternating user/assistant turns, trimmed to the last MAX_HISTORY_MESSAGES.
+_history = []
+MAX_HISTORY_MESSAGES = 12
+
+
+def reset_history():
+    """Forget the conversation so far."""
+    _history.clear()
+
 SYSTEM_PROMPT = (
     "You are a Blender Scene Editor AI. You do NOT write Python. You output a "
     "structured plan; a dumb executor runs it. You do all the spatial and "
@@ -52,9 +63,11 @@ SYSTEM_PROMPT = (
     "  - metallic / metal         -> metallic 0.8-1.0\n"
     "  - plastic                  -> roughness ~0.4, metallic 0\n"
     "  - dark                     -> low base_color values\n\n"
-    "Use the scene state for context. When the user refers to something that "
-    "already exists ('the sphere', 'it', 'make it brighter'), EDIT that object by "
-    "its exact name rather than creating a new one. Create only what doesn't "
+    "Use the prior conversation AND the scene state for context. When the user "
+    "refers to something by pronoun or description ('it', 'the sphere', 'make it "
+    "brighter', 'move them up'), resolve it to the right existing object — match "
+    "it to an exact name in the scene state — and EDIT that object rather than "
+    "creating a new one. Create only what doesn't "
     "exist yet. To build a structure, place concrete primitives at real "
     "coordinates (e.g. castle = ground plane + corner cylinder towers + stretched "
     "cube walls + cone roofs).\n\n"
@@ -135,7 +148,7 @@ def run(text, api_key=None, scene_state=None):
             max_tokens=8192,
             thinking={"type": "adaptive"},
             system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_content}],
+            messages=_history + [{"role": "user", "content": user_content}],
             output_config={"format": {"type": "json_schema", "schema": PLAN_SCHEMA}},
         )
     except anthropic.APIError as exc:
@@ -173,5 +186,17 @@ def run(text, api_key=None, scene_state=None):
                 action["params"] = json.loads(params) if params else {}
             except json.JSONDecodeError:
                 pass  # leave the raw string; the executor tolerates it
+
+    # Record this turn so later messages can resolve references like "it".
+    # We store the plain request (not the scene state, which is sent fresh each
+    # call) and a compact note of what was done, including affected object names.
+    _history.append({"role": "user", "content": text})
+    targets = list(dict.fromkeys(a.get("target") for a in actions if a.get("target")))
+    note = summary or "(done)"
+    if targets:
+        note += " | objects: " + ", ".join(targets)
+    _history.append({"role": "assistant", "content": note})
+    if len(_history) > MAX_HISTORY_MESSAGES:
+        del _history[: len(_history) - MAX_HISTORY_MESSAGES]
 
     return {"ok": True, "summary": summary, "actions": actions, "error": None}

@@ -22,6 +22,27 @@ dumb** — it only knows primitives, transforms, colors, and lights, and has no
 concept of a "castle" or "tower". That's what makes it open-ended: new kinds of
 scenes need no new executor code, only better planning by the AI.
 
+### Conversation memory
+
+The add-on remembers the conversation for the current Blender session, so
+references carry across messages — say *"add a sphere"*, then *"make it
+brighter"*, then *"move it behind the castle"* and each "it" resolves to the
+same object. Use **Clear Memory** to start fresh. (Memory is per-session; it
+resets when Blender restarts or the add-on is reloaded.)
+
+### Voice input
+
+The microphone button (🔴 next to **Run Command**) records a short spoken phrase
+and drops the transcription into the input field. It uses the
+`SpeechRecognition` library with Google's free Web Speech backend.
+
+Install the dependencies into Blender's Python:
+```
+<blender>/python/bin/python -m pip install SpeechRecognition pyaudio
+```
+Privacy note: the recorded audio is uploaded to Google for transcription. The
+viewport freezes for a moment while it listens (the call is synchronous).
+
 ### Scene Edit Language (SEL)
 
 Every action is `{action, target, params}`. The planner can **create** geometry
@@ -102,7 +123,8 @@ blender-ai-assistant/
 └── addon/
     ├── __init__.py   # add-on registration
     ├── ui.py         # sidebar panel
-    ├── operator.py   # "Run Command" operator — orchestrates plan → execute
-    ├── llm.py        # planning layer: intent → scene plan (concrete primitives)
-    └── executor.py   # execution layer: primitives → bpy.ops calls
+    ├── operator.py   # operators: Run Command, Speak (voice), Clear Memory
+    ├── llm.py        # planning layer: intent → SEL plan; conversation memory
+    ├── executor.py   # execution layer: SEL actions → bpy.ops calls
+    └── voice.py      # microphone capture + speech-to-text
 ```

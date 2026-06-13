@@ -13,4 +13,9 @@ class AIASSISTANT_PT_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         layout.prop(context.scene, "ai_assistant_input", text="")
-        layout.operator("aiassistant.run_command", text="Run Command")
+
+        row = layout.row(align=True)
+        row.operator("aiassistant.run_command", text="Run Command", icon="PLAY")
+        row.operator("aiassistant.voice_input", text="", icon="REC")
+
+        layout.operator("aiassistant.clear_memory", text="Clear Memory", icon="TRASH")

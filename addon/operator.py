@@ -2,7 +2,7 @@ import json
 
 import bpy
 
-from . import executor, llm
+from . import executor, llm, voice
 
 
 class AIASSISTANT_OT_run_command(bpy.types.Operator):
@@ -42,4 +42,37 @@ class AIASSISTANT_OT_run_command(bpy.types.Operator):
             print(f"  [{status}] {action_type}: {detail}")
 
         self.report({"INFO"}, f"Created {created}/{len(actions)} object(s).")
+        return {"FINISHED"}
+
+
+class AIASSISTANT_OT_voice_input(bpy.types.Operator):
+    """Record a spoken command and put the transcription in the input field."""
+
+    bl_idname = "aiassistant.voice_input"
+    bl_label = "Speak"
+
+    def execute(self, context):
+        # Blocks while listening, so the viewport freezes for a moment.
+        result = voice.transcribe()
+        if not result["ok"]:
+            print(f"[AI Assistant] Voice: {result['error']}")
+            self.report({"ERROR"}, result["error"])
+            return {"CANCELLED"}
+
+        context.scene.ai_assistant_input = result["text"]
+        print(f"[AI Assistant] Heard: {result['text']}")
+        self.report({"INFO"}, f"Heard: {result['text']}")
+        return {"FINISHED"}
+
+
+class AIASSISTANT_OT_clear_memory(bpy.types.Operator):
+    """Forget the conversation history (references like 'it' reset)."""
+
+    bl_idname = "aiassistant.clear_memory"
+    bl_label = "Clear Memory"
+
+    def execute(self, context):
+        llm.reset_history()
+        print("[AI Assistant] Conversation memory cleared.")
+        self.report({"INFO"}, "Conversation memory cleared.")
         return {"FINISHED"}

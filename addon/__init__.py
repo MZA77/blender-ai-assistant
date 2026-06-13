@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Blender AI Assistant",
     "author": "Zia Ahmed",
-    "version": (0, 5, 0),
+    "version": (0, 6, 0),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > AI Assistant",
     "description": "Minimal AI assistant panel for the 3D viewport (Claude-powered).",
@@ -35,6 +35,8 @@ class AIASSISTANT_AddonPreferences(bpy.types.AddonPreferences):
 classes = (
     AIASSISTANT_AddonPreferences,
     operator.AIASSISTANT_OT_run_command,
+    operator.AIASSISTANT_OT_voice_input,
+    operator.AIASSISTANT_OT_clear_memory,
     ui.AIASSISTANT_PT_panel,
 )
 
@@ -45,6 +47,8 @@ def register():
         description="Text to send to the assistant",
         default="",
     )
+    from . import llm
+    llm.reset_history()  # start each session with fresh memory
     for cls in classes:
         bpy.utils.register_class(cls)
 
