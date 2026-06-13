@@ -6,13 +6,24 @@ A minimal Blender add-on that adds an AI assistant panel to the 3D viewport.
 
 - Sidebar panel in the 3D View (`N` panel → **AI Assistant** tab)
 - Text input field
-- **Run Command** button that sends the text to Claude and **logs the returned
-  actions** to the system console
+- **Run Command** button that sends the text to Claude and **executes the
+  returned actions** in the scene
 
-The text → AI → JSON → console pipeline is wired up. The add-on sends your
-command to Claude (`claude-opus-4-8`), which returns a JSON list of actions.
-Those actions are printed to the console — they are **not executed in Blender
-yet** (that's a later stage).
+The full text → AI → JSON → execute pipeline is wired up. The add-on sends your
+command to Claude (`claude-opus-4-8`), which returns a JSON list of actions, and
+the executor turns those into real Blender objects via `bpy.ops`.
+
+### Supported actions
+
+| Action | Params | Result |
+| --- | --- | --- |
+| `create_cube` | `size` (number, default 2) | Adds a cube |
+| `create_sphere` | `color` (name, default grey) | Adds a colored UV sphere |
+
+Objects are spaced 3 units apart along X so multiple creations don't overlap.
+
+Example — type **`create 2 cubes and a red sphere`** and Blender creates two
+cubes and a red sphere.
 
 ## Install
 
@@ -53,6 +64,7 @@ blender-ai-assistant/
 └── addon/
     ├── __init__.py   # add-on registration
     ├── ui.py         # sidebar panel
-    ├── operator.py   # "Run Command" operator — logs the returned actions
-    └── llm.py        # Claude API call → JSON list of actions
+    ├── operator.py   # "Run Command" operator — runs the returned actions
+    ├── llm.py        # Claude API call → JSON list of actions
+    └── executor.py   # JSON actions → bpy.ops calls
 ```

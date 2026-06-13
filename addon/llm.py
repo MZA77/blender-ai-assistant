@@ -16,16 +16,21 @@ import os
 MODEL = "claude-opus-4-8"
 
 SYSTEM_PROMPT = (
-    "You are an assistant embedded in Blender. The user describes what they want "
-    "to do in the 3D scene in natural language. Translate their request into a "
-    "list of discrete actions.\n\n"
-    "You are only PLANNING — do not assume anything has been executed. Each action "
-    "has:\n"
-    "  - type: a short verb-like identifier (e.g. 'add_object', 'delete', 'move', "
-    "'scale', 'rename').\n"
-    "  - params: a JSON object, encoded as a string, holding that action's "
-    "arguments, e.g. '{\"object_type\": \"cube\", \"location\": [0, 0, 0]}'.\n\n"
-    "If the request is empty or unclear, return an empty action list."
+    "You are a Blender command generator. The user describes what they want in "
+    "the 3D scene in natural language. Translate their request into a list of "
+    "actions.\n\n"
+    "ONLY these two actions are supported:\n"
+    "  - create_cube   — params: {\"size\": <number>} (the cube's side length; "
+    "default 2).\n"
+    "  - create_sphere — params: {\"color\": \"<name>\"} (e.g. red, blue, green, "
+    "yellow, orange, purple, white, black; default grey).\n\n"
+    "Each action has:\n"
+    "  - type: exactly 'create_cube' or 'create_sphere'.\n"
+    "  - params: a JSON object encoded as a string, e.g. '{\"size\": 2}' or "
+    "'{\"color\": \"red\"}'.\n\n"
+    "If the user asks for N of something, emit N separate actions. Ignore any "
+    "request that isn't one of these two actions. If nothing applies, return an "
+    "empty list."
 )
 
 # Structured-output schema. The API guarantees the response is valid JSON

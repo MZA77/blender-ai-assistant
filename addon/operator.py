@@ -1,10 +1,10 @@
 import bpy
 
-from . import llm
+from . import executor, llm
 
 
 class AIASSISTANT_OT_run_command(bpy.types.Operator):
-    """Send the panel's text to Claude and log the returned actions."""
+    """Send the panel's text to Claude and execute the returned actions."""
 
     bl_idname = "aiassistant.run_command"
     bl_label = "Run Command"
@@ -20,12 +20,18 @@ class AIASSISTANT_OT_run_command(bpy.types.Operator):
             self.report({"ERROR"}, result["error"])
             return {"CANCELLED"}
 
-        # This stage only logs the plan — actions are NOT executed yet.
         actions = result["actions"]
         print(f"[AI Assistant] Command: {text}")
-        print(f"[AI Assistant] {len(actions)} action(s) returned (not executed):")
-        for i, action in enumerate(actions, 1):
-            print(f"  {i}. {action.get('type')}  params={action.get('params')}")
+        print(f"[AI Assistant] {len(actions)} action(s) returned — executing:")
 
-        self.report({"INFO"}, f"{len(actions)} action(s) logged to console.")
+        # Turn the JSON actions into real Blender objects.
+        outcomes = executor.execute(actions)
+        created = 0
+        for action_type, ok, detail in outcomes:
+            status = "ok" if ok else "FAILED"
+            if ok:
+                created += 1
+            print(f"  [{status}] {action_type}: {detail}")
+
+        self.report({"INFO"}, f"Created {created}/{len(actions)} object(s).")
         return {"FINISHED"}
