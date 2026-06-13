@@ -1,10 +1,11 @@
-"""Claude API integration.
+"""Planning layer.
 
-Sends the user's natural-language command to Claude and asks for a JSON list
-of actions. This stage only RETURNS and logs the actions — it deliberately does
-NOT execute anything in Blender yet.
+Interprets intent and emits a Scene Edit Language (SEL) plan: a list of
+`{action, target, params}` edits — creating primitives, setting materials, and
+transforming objects. The intelligence (spatial + material reasoning) lives
+here; the executor (`executor.py`) is deliberately dumb.
 
-Flow:  text  ->  Claude  ->  JSON {actions: [...]}  ->  returned to caller
+Flow:  text + scene state  ->  Claude  ->  {summary, actions: [...]}
 
 Requires the official Anthropic SDK installed into Blender's bundled Python:
     <blender>/python/bin/python -m pip install anthropic
@@ -16,64 +17,94 @@ import os
 MODEL = "claude-opus-4-8"
 
 SYSTEM_PROMPT = (
-    "You are a Blender command generator. The user describes what they want in "
-    "the 3D scene in natural language. Translate their request into a list of "
-    "actions.\n\n"
-    "ONLY these two actions are supported:\n"
-    "  - create_cube   — params: {\"size\": <number>} (the cube's side length; "
-    "default 2).\n"
-    "  - create_sphere — params: {\"color\": \"<name>\"} (e.g. red, blue, green, "
-    "yellow, orange, purple, white, black; default grey).\n\n"
-    "Each action has:\n"
-    "  - type: exactly 'create_cube' or 'create_sphere'.\n"
-    "  - params: a JSON object encoded as a string, e.g. '{\"size\": 2}' or "
-    "'{\"color\": \"red\"}'.\n\n"
-    "If the user asks for N of something, emit N separate actions. Ignore any "
-    "request that isn't one of these two actions. If nothing applies, return an "
-    "empty list."
+    "You are a Blender Scene Editor AI. You do NOT write Python. You output a "
+    "structured plan; a dumb executor runs it. You do all the spatial and "
+    "material reasoning yourself.\n\n"
+    "Each action is {action, target, params}, where params is a JSON OBJECT "
+    "ENCODED AS A STRING.\n\n"
+    "CREATE actions — `target` is a NEW, unique name you assign (e.g. "
+    "'tower_1', 'sphere_1'):\n"
+    "  - create_cube     {\"size\": n, \"location\": [x,y,z], \"scale\": [x,y,z], "
+    "\"rotation\": [rx,ry,rz], \"color\": \"name\"}\n"
+    "  - create_cylinder {\"radius\": n, \"depth\": n, \"location\": [..], "
+    "\"rotation\": [..], \"color\": \"name\"}\n"
+    "  - create_cone     {\"radius\": n, \"depth\": n, \"location\": [..], "
+    "\"rotation\": [..], \"color\": \"name\"}  (roofs/spikes)\n"
+    "  - create_sphere   {\"radius\": n, \"location\": [..], \"color\": \"name\"}\n"
+    "  - create_plane    {\"size\": n, \"location\": [..], \"color\": \"name\"}  (ground)\n"
+    "  - add_light       {\"light_type\": \"POINT|SUN|SPOT|AREA\", \"energy\": n, "
+    "\"location\": [..], \"color\": \"name\"}\n\n"
+    "EDIT actions — `target` is the EXACT name of an existing object from the "
+    "scene state:\n"
+    "  - set_material {\"base_color\": [r,g,b], \"roughness\": 0-1, "
+    "\"metallic\": 0-1, \"emission_strength\": 0-10, \"emission_color\": [r,g,b]}\n"
+    "  - transform_object {\"location\": [x,y,z] OR \"behind:name\" / \"front:name\" "
+    "/ \"left:name\" / \"right:name\" / \"above:name\" / \"on:name\" / "
+    "\"below:name\", \"rotation\": [rx,ry,rz], \"scale\": [x,y,z]}\n\n"
+    "Conventions: colors as [r,g,b] floats 0-1 (or a name: red, green, blue, "
+    "yellow, orange, purple, pink, cyan, brown, white, black, grey). +Z is up. "
+    "rotation in DEGREES. An object of size S spans S/2 each side of its location "
+    "— rest things on the ground/each other.\n\n"
+    "Material intelligence — translate description into PBR params:\n"
+    "  - bright / glowing / neon  -> emission_strength 2-10 (+ emission_color)\n"
+    "  - soft / matte             -> roughness 0.7-1.0\n"
+    "  - shiny / glossy           -> roughness 0.0-0.3\n"
+    "  - metallic / metal         -> metallic 0.8-1.0\n"
+    "  - plastic                  -> roughness ~0.4, metallic 0\n"
+    "  - dark                     -> low base_color values\n\n"
+    "Use the scene state for context. When the user refers to something that "
+    "already exists ('the sphere', 'it', 'make it brighter'), EDIT that object by "
+    "its exact name rather than creating a new one. Create only what doesn't "
+    "exist yet. To build a structure, place concrete primitives at real "
+    "coordinates (e.g. castle = ground plane + corner cylinder towers + stretched "
+    "cube walls + cone roofs).\n\n"
+    "Keep it recognizable: roughly 1-30 actions. Also return a short 'summary' "
+    "(one or two sentences) of your plan. If the request is impossible with these "
+    "actions, return an empty list and say why in the summary."
 )
 
-# Structured-output schema. The API guarantees the response is valid JSON
-# matching this shape. `params` is a JSON-encoded string so each action can
-# carry arbitrary arguments (strict structured outputs disallow free-form
-# objects, so we nest the flexible part as a string and decode it ourselves).
-ACTIONS_SCHEMA = {
+# Structured-output schema for a SEL plan.
+PLAN_SCHEMA = {
     "type": "object",
     "properties": {
+        "summary": {"type": "string"},
         "actions": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "type": {"type": "string"},
+                    "action": {"type": "string"},
+                    "target": {"type": "string"},
                     "params": {"type": "string"},
                 },
-                "required": ["type", "params"],
+                "required": ["action", "target", "params"],
                 "additionalProperties": False,
             },
-        }
+        },
     },
-    "required": ["actions"],
+    "required": ["summary", "actions"],
     "additionalProperties": False,
 }
 
 
-def run(text, api_key=None):
-    """Send `text` to Claude and return a result dict.
+def run(text, api_key=None, scene_state=None):
+    """Plan scene edits from `text` and return a result dict.
 
     Returns a dict with keys:
         ok      (bool)        — whether the call succeeded
-        actions (list[dict])  — the planned actions (each: {type, params})
+        summary (str)         — the plan the editor chose
+        actions (list[dict])  — SEL edits (each: {action, target, params})
         error   (str | None)  — a human-readable message when ok is False
     """
     text = (text or "").strip()
     if not text:
-        return {"ok": False, "actions": [], "error": "No command entered."}
+        return {"ok": False, "summary": "", "actions": [], "error": "No command entered."}
 
     key = api_key or os.environ.get("ANTHROPIC_API_KEY")
     if not key:
         return {
             "ok": False,
+            "summary": "",
             "actions": [],
             "error": (
                 "No API key. Set it in the add-on preferences (Edit > Preferences "
@@ -87,6 +118,7 @@ def run(text, api_key=None):
     except ImportError:
         return {
             "ok": False,
+            "summary": "",
             "actions": [],
             "error": (
                 "The 'anthropic' package is not installed in Blender's Python. "
@@ -94,40 +126,52 @@ def run(text, api_key=None):
             ),
         }
 
+    user_content = f"User request:\n{text}\n\nScene state:\n{scene_state or 'empty'}"
+
     try:
         client = anthropic.Anthropic(api_key=key)
         response = client.messages.create(
             model=MODEL,
-            max_tokens=4096,
+            max_tokens=8192,
             thinking={"type": "adaptive"},
             system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": text}],
-            output_config={
-                "format": {"type": "json_schema", "schema": ACTIONS_SCHEMA}
-            },
+            messages=[{"role": "user", "content": user_content}],
+            output_config={"format": {"type": "json_schema", "schema": PLAN_SCHEMA}},
         )
     except anthropic.APIError as exc:
-        return {"ok": False, "actions": [], "error": f"API error: {exc}"}
+        return {"ok": False, "summary": "", "actions": [], "error": f"API error: {exc}"}
     except Exception as exc:  # network failure, bad key, etc.
-        return {"ok": False, "actions": [], "error": f"Request failed: {exc}"}
+        return {"ok": False, "summary": "", "actions": [], "error": f"Request failed: {exc}"}
 
     if response.stop_reason == "refusal":
-        return {"ok": False, "actions": [], "error": "Claude declined this request."}
+        return {
+            "ok": False,
+            "summary": "",
+            "actions": [],
+            "error": "Claude declined this request.",
+        }
 
     # output_config.format guarantees the first text block is valid JSON.
     raw = next((b.text for b in response.content if b.type == "text"), "")
     try:
-        actions = json.loads(raw).get("actions", [])
+        plan = json.loads(raw)
+        actions = plan.get("actions", [])
+        summary = plan.get("summary", "")
     except (json.JSONDecodeError, AttributeError):
-        return {"ok": False, "actions": [], "error": f"Could not parse response: {raw}"}
+        return {
+            "ok": False,
+            "summary": "",
+            "actions": [],
+            "error": f"Could not parse response: {raw}",
+        }
 
-    # Decode each action's params (stored as a JSON string) for convenience.
+    # Decode each action's params (stored as a JSON string) into a dict.
     for action in actions:
         params = action.get("params")
         if isinstance(params, str):
             try:
                 action["params"] = json.loads(params) if params else {}
             except json.JSONDecodeError:
-                pass  # leave the raw string if it isn't valid JSON
+                pass  # leave the raw string; the executor tolerates it
 
-    return {"ok": True, "actions": actions, "error": None}
+    return {"ok": True, "summary": summary, "actions": actions, "error": None}

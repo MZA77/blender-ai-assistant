@@ -7,23 +7,61 @@ A minimal Blender add-on that adds an AI assistant panel to the 3D viewport.
 - Sidebar panel in the 3D View (`N` panel → **AI Assistant** tab)
 - Text input field
 - **Run Command** button that sends the text to Claude and **executes the
-  returned actions** in the scene
+  resulting scene plan** in the viewport
 
-The full text → AI → JSON → execute pipeline is wired up. The add-on sends your
-command to Claude (`claude-opus-4-8`), which returns a JSON list of actions, and
-the executor turns those into real Blender objects via `bpy.ops`.
+### Architecture — a small text-to-3D compiler
 
-### Supported actions
+```
+your words → planning layer (Claude) → scene plan (concrete primitives) → executor (bpy.ops) → 3D
+```
 
-| Action | Params | Result |
-| --- | --- | --- |
-| `create_cube` | `size` (number, default 2) | Adds a cube |
-| `create_sphere` | `color` (name, default grey) | Adds a colored UV sphere |
+The intelligence lives in the **planning layer**: Claude interprets intent,
+chooses a construction strategy, and emits a list of primitive placements with
+real coordinates (it does the spatial reasoning). The **executor is deliberately
+dumb** — it only knows primitives, transforms, colors, and lights, and has no
+concept of a "castle" or "tower". That's what makes it open-ended: new kinds of
+scenes need no new executor code, only better planning by the AI.
 
-Objects are spaced 3 units apart along X so multiple creations don't overlap.
+### Scene Edit Language (SEL)
 
-Example — type **`create 2 cubes and a red sphere`** and Blender creates two
-cubes and a red sphere.
+Every action is `{action, target, params}`. The planner can **create** geometry
+and **edit existing objects** (materials, transforms). Because each request also
+receives a snapshot of the scene (object names, locations, and material values),
+follow-ups like *"make the sphere brighter"* resolve against what's already
+there.
+
+**Create actions** (`target` = a new name the planner assigns, e.g. `tower_1`):
+
+| Action | Key params |
+| --- | --- |
+| `create_cube` | `size`, `location`, `scale`, `rotation`, `color` |
+| `create_cylinder` | `radius`, `depth`, `location`, `rotation`, `color` |
+| `create_cone` | `radius`, `depth`, `location`, `rotation`, `color` |
+| `create_sphere` | `radius`, `location`, `color` |
+| `create_plane` | `size`, `location`, `color` |
+| `add_light` | `light_type`, `energy`, `location`, `color` |
+
+**Edit actions** (`target` = an existing object's name):
+
+| Action | Key params |
+| --- | --- |
+| `set_material` | `base_color`, `roughness`, `metallic`, `emission_strength`, `emission_color` |
+| `transform_object` | `location` (`[x,y,z]` or `"behind:name"`, `"above:name"`, …), `rotation`, `scale` |
+
+`location`/`scale`/`rotation` are `[x, y, z]`; rotation is in **degrees**, +Z up.
+Colors are `[r,g,b]` (0–1) or names. `transform_object` accepts relative
+positions like `behind:`, `front:`, `left:`, `right:`, `above:`, `on:`,
+`below:` followed by an object name, resolved from that object's live position
+and size.
+
+**Material intelligence** — the planner maps language to PBR params: bright /
+glowing → emission, matte → high roughness, shiny → low roughness, metallic →
+high metallic, dark → low base color.
+
+Examples:
+- `create 2 cubes and a red sphere`
+- `build a small medieval castle with stone walls, corner towers, and moody lighting`
+- `make the sphere bright glowing red and move it behind the castle base`
 
 ## Install
 
@@ -64,7 +102,7 @@ blender-ai-assistant/
 └── addon/
     ├── __init__.py   # add-on registration
     ├── ui.py         # sidebar panel
-    ├── operator.py   # "Run Command" operator — runs the returned actions
-    ├── llm.py        # Claude API call → JSON list of actions
-    └── executor.py   # JSON actions → bpy.ops calls
+    ├── operator.py   # "Run Command" operator — orchestrates plan → execute
+    ├── llm.py        # planning layer: intent → scene plan (concrete primitives)
+    └── executor.py   # execution layer: primitives → bpy.ops calls
 ```

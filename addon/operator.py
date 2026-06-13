@@ -1,3 +1,5 @@
+import json
+
 import bpy
 
 from . import executor, llm
@@ -13,7 +15,12 @@ class AIASSISTANT_OT_run_command(bpy.types.Operator):
         text = context.scene.ai_assistant_input
         prefs = context.preferences.addons[__package__].preferences
 
-        result = llm.run(text, api_key=prefs.api_key)
+        # Structured snapshot of the scene (names, types, locations, materials)
+        # so the planner can target and modify what already exists.
+        state = executor.scene_state(context)
+        scene_state = json.dumps(state) if state else "empty"
+
+        result = llm.run(text, api_key=prefs.api_key, scene_state=scene_state)
 
         if not result["ok"]:
             print(f"[AI Assistant] Error: {result['error']}")
@@ -22,9 +29,10 @@ class AIASSISTANT_OT_run_command(bpy.types.Operator):
 
         actions = result["actions"]
         print(f"[AI Assistant] Command: {text}")
-        print(f"[AI Assistant] {len(actions)} action(s) returned — executing:")
+        print(f"[AI Assistant] Plan: {result['summary']}")
+        print(f"[AI Assistant] {len(actions)} step(s) — executing:")
 
-        # Turn the JSON actions into real Blender objects.
+        # Turn the concrete primitive steps into real Blender objects.
         outcomes = executor.execute(actions)
         created = 0
         for action_type, ok, detail in outcomes:

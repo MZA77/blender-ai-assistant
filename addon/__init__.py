@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Blender AI Assistant",
     "author": "Zia Ahmed",
-    "version": (0, 3, 0),
+    "version": (0, 5, 0),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > AI Assistant",
     "description": "Minimal AI assistant panel for the 3D viewport (Claude-powered).",
