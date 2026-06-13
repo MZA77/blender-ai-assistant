@@ -3,6 +3,8 @@
 **A natural language interface for Blender that turns speech and text into
 real-time 3D scene manipulation.**
 
+![Demo — typing "make a castle" builds a castle in Blender](demo/demo.gif)
+
 Control and manipulate 3D scenes using plain language or your voice. The add-on
 translates human instructions into structured scene actions, letting you create,
 modify, and transform objects inside Blender without navigating tools or menus.
